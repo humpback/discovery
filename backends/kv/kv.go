@@ -1,11 +1,11 @@
 package kv
 
-import "github.com/humpback/discovery/backends"
 import "github.com/docker/libkv"
 import "github.com/docker/libkv/store"
 import "github.com/docker/libkv/store/consul"
 import "github.com/docker/libkv/store/etcd"
 import "github.com/docker/libkv/store/zookeeper"
+import "github.com/humpback/discovery/backends"
 
 import (
 	"path"
