@@ -3,9 +3,11 @@ package discovery
 import "github.com/humpback/discovery/backends"
 import _ "github.com/humpback/discovery/backends/kv"
 
-import "time"
+import (
+	"time"
+)
 
-type DiscoveryRegistryFunc func(err error)
+type DiscoveryRegistryFunc func(key string, err error)
 type DiscoveryWatchFunc func(added backends.Entries, removed backends.Entries, err error)
 
 /*
@@ -39,16 +41,22 @@ func New(uris string, heartbeat time.Duration, ttl time.Duration, configopts map
 Register 注册到集群服务发现, 由集群被管理节点调用
 key: 集群节点唯一编码
 buf: 节点附加数据, 可以为nil
+stopCh: 退出心跳注册
 Register为非阻塞方式, 上层业务调用后需考虑阻塞, 避免应用退出.
 */
-func (d *Discovery) Register(key string, buf []byte, fn DiscoveryRegistryFunc) {
+func (d *Discovery) Register(key string, buf []byte, stopCh <-chan struct{}, fn DiscoveryRegistryFunc) {
 
-	errCh := d.backend.Register(key, buf)
+	errCh := d.backend.Register(key, buf, stopCh)
 	go func() {
 		for {
 			select {
 			case err := <-errCh:
-				fn(err)
+				if fn != nil {
+					fn(key, err)
+				}
+				if err == backends.ErrEntryKeyInvalid || err == backends.ErrEntryInvlid || err == backends.ErrRegistLoopQuit {
+					return
+				}
 			}
 		}
 	}()
@@ -57,6 +65,7 @@ func (d *Discovery) Register(key string, buf []byte, fn DiscoveryRegistryFunc) {
 /*
 Watch 集群监视功能, 由集群管理节点调用
 Watch 为非阻塞方式, 上层业务调用后需考虑阻塞, 避免应用退出.
+stopCh: 退出服务发现
 */
 func (d *Discovery) Watch(stopCh <-chan struct{}, fn DiscoveryWatchFunc) {
 

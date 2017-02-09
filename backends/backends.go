@@ -21,6 +21,8 @@ var (
 	ErrEntryKeyInvalid = errors.New("entry key invalid.")
 	//ErrEntryKeyInvalid 节点Entry对应Key值无效
 	ErrWatchException = errors.New("unexpected watch error.")
+	//ErrRegistLoopQuit 节点退出注册
+	ErrRegistLoopQuit = errors.New("regist loop quited.")
 )
 
 /*
@@ -42,9 +44,9 @@ type Backend interface {
 	//Watcher 每个后端必须实现Watcher接口, 监视节点变化
 	Watcher
 	//Initialize 初始化服务发现功能, 传入uris, heartbeat(心跳频率), ttl(超时阈值)和一个map选项设置
-	Initialize(string, time.Duration, time.Duration, map[string]string) error
+	Initialize(rawuri string, heartbeat time.Duration, ttl time.Duration, configopts map[string]string) error
 	//Register 注册到一个发现服务, 传入节点key, data(附加数据)
-	Register(string, []byte) <-chan error
+	Register(key string, data []byte, stopCh <-chan struct{}) <-chan error
 }
 
 /*

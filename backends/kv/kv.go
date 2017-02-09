@@ -84,26 +84,42 @@ Register 服务注册
 节点根据heartbeat轮询定时注册, 节点过期由ttl阈值决定
 key: 集群节点唯一编码
 data: 节点数据，可为nil
+stopCh: 退出心跳注册
 */
-func (d *Discovery) Register(key string, data []byte) <-chan error {
+
+func (d *Discovery) Register(key string, data []byte, stopCh <-chan struct{}) <-chan error {
 
 	errCh := make(chan error)
 	go func() {
 		defer close(errCh)
 		if strings.TrimSpace(key) == "" {
 			errCh <- backends.ErrEntryKeyInvalid
-		} else {
-			opts := &store.WriteOptions{TTL: d.ttl}
-			entry := &backends.Entry{Key: key, Data: data}
-			buf, err := backends.EnCodeEntry(entry)
-			if err != nil {
-				errCh <- backends.ErrEntryInvlid
-			} else {
-				for {
+			return
+		}
+
+		opts := &store.WriteOptions{TTL: d.ttl}
+		entry := &backends.Entry{Key: key, Data: data}
+		buf, err := backends.EnCodeEntry(entry)
+		if err != nil {
+			errCh <- backends.ErrEntryInvlid
+			return
+		}
+
+		for {
+			t := time.NewTicker(d.heartbeat)
+			select {
+			case <-t.C:
+				{
+					t.Stop()
 					if err := d.store.Put(path.Join(d.path, key), buf, opts); err != nil {
 						errCh <- err
 					}
-					time.Sleep(d.heartbeat)
+				}
+			case <-stopCh:
+				{
+					t.Stop()
+					errCh <- backends.ErrRegistLoopQuit
+					return
 				}
 			}
 		}
@@ -114,6 +130,7 @@ func (d *Discovery) Register(key string, data []byte) <-chan error {
 /*
 Watch 节点监视
 由发现服务端调用, 实现WatchTree监视所有节点变化
+stopCh: 退出服务发现
 */
 func (d *Discovery) Watch(stopCh <-chan struct{}) (<-chan backends.Entries, <-chan error) {
 
