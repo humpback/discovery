@@ -8,8 +8,10 @@ import "github.com/docker/libkv/store/zookeeper"
 import "github.com/humpback/discovery/backends"
 
 import (
+	"fmt"
 	"path"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -169,21 +171,47 @@ func (d *Discovery) watchOnce(stopCh <-chan struct{}, watchCh <-chan []*store.KV
 	for {
 		select {
 		case pairs := <-watchCh:
-			if pairs == nil {
-				return true
-			}
-			data := make([][]byte, len(pairs))
-			for _, pair := range pairs {
-				data = append(data, pair.Value)
-			}
-			entries, err := backends.PressEntriesData(data)
-			if err != nil {
-				errCh <- err
-			} else {
-				discoveryCh <- entries
+			{
+				if pairs == nil {
+					return true
+				}
+
+				pCall := struct {
+					sync.Mutex
+					Data [][]byte
+				}{
+					Data: make([][]byte, 0),
+				}
+
+				size := len(pairs)
+				wgroup := sync.WaitGroup{}
+				wgroup.Add(size)
+				for _, it := range pairs {
+					go func(p *store.KVPair) {
+						path := d.path + "/" + p.Key
+						pair, err := d.store.Get(path)
+						if err != nil {
+							fmt.Printf("watch error:%s | %s\n", path, err.Error())
+						} else {
+							pCall.Lock()
+							pCall.Data = append(pCall.Data, pair.Value)
+							pCall.Unlock()
+						}
+						wgroup.Done()
+					}(it)
+				}
+				wgroup.Wait()
+				entries, err := backends.PressEntriesData(pCall.Data)
+				if err != nil {
+					errCh <- err
+				} else {
+					discoveryCh <- entries
+				}
 			}
 		case <-stopCh:
-			return false
+			{
+				return false
+			}
 		}
 	}
 }

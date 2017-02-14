@@ -78,11 +78,15 @@ func (d *Discovery) Watch(stopCh <-chan struct{}, fn DiscoveryWatchFunc) {
 				{
 					added, removed := cache.Diff(entries)
 					cache = entries
-					fn(added, removed, nil)
+					if fn != nil {
+						fn(added, removed, nil)
+					}
 				}
 			case err := <-errCh:
 				{
-					fn(nil, nil, err)
+					if fn != nil {
+						fn(nil, nil, err)
+					}
 				}
 			}
 		}
