@@ -1,5 +1,6 @@
 package kv
 
+import "github.com/docker/go-connections/tlsconfig"
 import "github.com/docker/libkv"
 import "github.com/docker/libkv/store"
 import "github.com/docker/libkv/store/consul"
@@ -8,7 +9,7 @@ import "github.com/docker/libkv/store/zookeeper"
 import "github.com/humpback/discovery/backends"
 
 import (
-	"fmt"
+	"log"
 	"path"
 	"strings"
 	"sync"
@@ -28,6 +29,7 @@ Discovery 发现服务结构定义
 集成LibStore库实现
 */
 type Discovery struct {
+	sync.Mutex
 	backend   store.Backend
 	store     store.Store
 	heartbeat time.Duration
@@ -76,8 +78,32 @@ func (d *Discovery) Initialize(uris string, heartbeat time.Duration, ttl time.Du
 		dpath = strings.TrimSpace(configopts["kv.path"])
 	}
 
+	var config *store.Config
+	if configopts["kv.cacertfile"] != "" && configopts["kv.certfile"] != "" && configopts["kv.keyfile"] != "" {
+		log.Printf("Initializing discovery with TLS...\n")
+		tlsconfig, err := tlsconfig.Client(tlsconfig.Options{
+			CAFile:   configopts["kv.cacertfile"],
+			CertFile: configopts["kv.certfile"],
+			KeyFile:  configopts["kv.keyfile"],
+		})
+		if err != nil {
+			return err
+		}
+
+		config = &store.Config{
+			ClientTLS: &store.ClientTLSConfig{
+				CACertFile: configopts["kv.cacertfile"],
+				CertFile:   configopts["kv.certfile"],
+				KeyFile:    configopts["kv.keyfile"],
+			},
+			TLS: tlsconfig,
+		}
+	} else {
+		log.Printf("Initializing discovery without TLS...\n")
+	}
+
 	d.path = path.Join(d.prefix, dpath, "nodes")
-	d.store, err = libkv.NewStore(d.backend, addrs, &store.Config{})
+	d.store, err = libkv.NewStore(d.backend, addrs, config)
 	return err
 }
 
@@ -88,7 +114,6 @@ key: 集群节点唯一编码
 data: 节点数据，可为nil
 stopCh: 退出心跳注册
 */
-
 func (d *Discovery) Register(key string, data []byte, stopCh <-chan struct{}) <-chan error {
 
 	errCh := make(chan error)
@@ -176,32 +201,13 @@ func (d *Discovery) watchOnce(stopCh <-chan struct{}, watchCh <-chan []*store.KV
 					return true
 				}
 
-				pCall := struct {
-					sync.Mutex
-					Data [][]byte
-				}{
-					Data: make([][]byte, 0),
+				//data := d.pullKVPairsData(pairs)
+				data := make([][]byte, len(pairs))
+				for _, pair := range pairs {
+					data = append(data, pair.Value)
 				}
 
-				size := len(pairs)
-				wgroup := sync.WaitGroup{}
-				wgroup.Add(size)
-				for _, it := range pairs {
-					go func(p *store.KVPair) {
-						path := d.path + "/" + p.Key
-						pair, err := d.store.Get(path)
-						if err != nil {
-							fmt.Printf("watch error:%s | %s\n", path, err.Error())
-						} else {
-							pCall.Lock()
-							pCall.Data = append(pCall.Data, pair.Value)
-							pCall.Unlock()
-						}
-						wgroup.Done()
-					}(it)
-				}
-				wgroup.Wait()
-				entries, err := backends.PressEntriesData(pCall.Data)
+				entries, err := backends.PressEntriesData(data)
 				if err != nil {
 					errCh <- err
 				} else {
@@ -214,4 +220,37 @@ func (d *Discovery) watchOnce(stopCh <-chan struct{}, watchCh <-chan []*store.KV
 			}
 		}
 	}
+}
+
+func (d *Discovery) pullKVPairsData(pairs []*store.KVPair) [][]byte {
+
+	d.Lock()
+	defer d.Unlock()
+
+	pCall := struct {
+		sync.Mutex
+		Data [][]byte
+	}{
+		Data: make([][]byte, 0),
+	}
+
+	size := len(pairs)
+	wgroup := sync.WaitGroup{}
+	wgroup.Add(size)
+	for _, it := range pairs {
+		go func(p *store.KVPair) {
+			path := path.Join(d.path, p.Key)
+			pair, err := d.store.Get(path)
+			if err != nil {
+				log.Printf("discovery watch error:%s | %s\n", path, err.Error())
+			} else {
+				pCall.Lock()
+				pCall.Data = append(pCall.Data, pair.Value)
+				pCall.Unlock()
+			}
+			wgroup.Done()
+		}(it)
+	}
+	wgroup.Wait()
+	return pCall.Data
 }
