@@ -2,7 +2,7 @@
 #  humpback discovery Makefile 
 #
 
-export GOPATH=D:/work/projects/golang
+export GOPATH=D:/work/projects/golibs
 
 GO_CMD=go
 GO_BUILD=$(GO_CMD) build
