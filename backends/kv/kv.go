@@ -35,7 +35,7 @@ type Discovery struct {
 	heartbeat time.Duration
 	ttl       time.Duration
 	prefix    string
-	path      string
+	nspath    string
 }
 
 /*
@@ -102,7 +102,7 @@ func (d *Discovery) Initialize(uris string, heartbeat time.Duration, ttl time.Du
 		log.Printf("Initializing discovery without TLS...\n")
 	}
 
-	d.path = path.Join(d.prefix, dpath, "nodes")
+	d.nspath = path.Join(d.prefix, dpath, "nodes")
 	d.store, err = libkv.NewStore(d.backend, addrs, config)
 	return err
 }
@@ -138,7 +138,7 @@ func (d *Discovery) Register(key string, data []byte, stopCh <-chan struct{}) <-
 			case <-t.C:
 				{
 					t.Stop()
-					if err := d.store.Put(path.Join(d.path, key), buf, opts); err != nil {
+					if err := d.store.Put(path.Join(d.nspath, key), buf, opts); err != nil {
 						errCh <- err
 					}
 				}
@@ -155,11 +155,11 @@ func (d *Discovery) Register(key string, data []byte, stopCh <-chan struct{}) <-
 }
 
 /*
-Watch 节点监视
+WatchNodes 节点监视
 由发现服务端调用, 实现WatchTree监视所有节点变化
 stopCh: 退出服务发现
 */
-func (d *Discovery) Watch(stopCh <-chan struct{}) (<-chan backends.Entries, <-chan error) {
+func (d *Discovery) WatchNodes(stopCh <-chan struct{}) (<-chan backends.Entries, <-chan error) {
 
 	ch := make(chan backends.Entries)
 	errCh := make(chan error)
@@ -167,16 +167,16 @@ func (d *Discovery) Watch(stopCh <-chan struct{}) (<-chan backends.Entries, <-ch
 		defer close(ch)
 		defer close(errCh)
 		for {
-			exists, err := d.store.Exists(d.path)
+			exists, err := d.store.Exists(d.nspath)
 			if err != nil {
 				errCh <- err
 			}
 			if !exists {
-				if err := d.store.Put(d.path, []byte(""), &store.WriteOptions{IsDir: true}); err != nil {
+				if err := d.store.Put(d.nspath, []byte(""), &store.WriteOptions{IsDir: true}); err != nil {
 					errCh <- err
 				}
 			}
-			watchCh, err := d.store.WatchTree(d.path, stopCh)
+			watchCh, err := d.store.WatchTree(d.nspath, stopCh)
 			if err != nil {
 				errCh <- err
 			} else {
@@ -189,6 +189,46 @@ func (d *Discovery) Watch(stopCh <-chan struct{}) (<-chan backends.Entries, <-ch
 		}
 	}()
 	return ch, errCh
+}
+
+/*
+WatchExtend 扩展路径监视
+监视扩展路径变化
+key: 一个被监视的全路径
+stopCh: 退出服务发现
+*/
+func (d *Discovery) WatchExtend(key string, stopCh <-chan struct{}) (<-chan []byte, <-chan error) {
+
+	dataCh := make(chan []byte)
+	errCh := make(chan error)
+	var lastIndex uint64
+	go func() {
+		defer close(dataCh)
+		defer close(errCh)
+		for {
+			watchCh, err := d.store.Watch(key, stopCh)
+			if err != nil {
+				errCh <- err
+			} else {
+				select {
+				case pair := <-watchCh:
+					if pair != nil {
+						if lastIndex != pair.LastIndex {
+							lastIndex = pair.LastIndex
+							dataCh <- pair.Value
+						}
+					} else {
+						errCh <- backends.ErrWatchPairInvalid
+					}
+				case <-stopCh:
+					dataCh <- []byte{}
+					return
+				}
+			}
+			time.Sleep(time.Second * 5)
+		}
+	}()
+	return dataCh, errCh
 }
 
 func (d *Discovery) watchOnce(stopCh <-chan struct{}, watchCh <-chan []*store.KVPair, discoveryCh chan backends.Entries, errCh chan error) bool {
@@ -239,7 +279,7 @@ func (d *Discovery) pullKVPairsData(pairs []*store.KVPair) [][]byte {
 	wgroup.Add(size)
 	for _, it := range pairs {
 		go func(p *store.KVPair) {
-			path := path.Join(d.path, p.Key)
+			path := path.Join(d.nspath, p.Key)
 			pair, err := d.store.Get(path)
 			if err != nil {
 				log.Printf("discovery watch error:%s | %s\n", path, err.Error())

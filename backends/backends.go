@@ -19,21 +19,29 @@ var (
 	ErrEntryInvlid = errors.New("entry invalid.")
 	//ErrEntryKeyInvalid 节点Entry对应Key值无效
 	ErrEntryKeyInvalid = errors.New("entry key invalid.")
-	//ErrEntryKeyInvalid 节点Entry对应Key值无效
+	//ErrWatchException 节点Watch异常
 	ErrWatchException = errors.New("unexpected watch error.")
+	//ErrWatchPairInvalid 节点Watch值Pair为nil无效
+	ErrWatchPairInvalid = errors.New("watch pair invalid.")
 	//ErrRegistLoopQuit 节点退出注册
 	ErrRegistLoopQuit = errors.New("regist loop quited.")
 )
 
 /*
 Watcher 监视接口定义
-提供在集群上监视节点的加入与离开功能, 由一个具体的Backend实体实现
 */
 type Watcher interface {
+	//WatchNodes 提供在集群上监视节点的加入与离开功能, 由一个具体的Backend实体实现
 	//stopCh: 传入一个非nil chan, 立即停止监视, 一般服务端需传入nil, 而命令方式查看一般传入非nil实体.
 	//Entries：返回监视到的在线节点信息
 	//error: 返回一个监视异常错误
-	Watch(stopCh <-chan struct{}) (<-chan Entries, <-chan error)
+	WatchNodes(stopCh <-chan struct{}) (<-chan Entries, <-chan error)
+	//WatchExtend 监视一个扩展路径
+	//key: 监视路径
+	//stopCh: 传入一个非nil chan, 立即停止监视, 一般服务端需传入nil, 而命令方式查看一般传入非nil实体.
+	//data：路径信息
+	//error: 返回一个监视异常错误
+	WatchExtend(key string, stopCh <-chan struct{}) (<-chan []byte, <-chan error)
 }
 
 /*

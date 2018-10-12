@@ -8,7 +8,8 @@ import (
 )
 
 type DiscoveryRegistryFunc func(key string, err error)
-type DiscoveryWatchFunc func(added backends.Entries, removed backends.Entries, err error)
+type DiscoveryWatchNodesFunc func(added backends.Entries, removed backends.Entries, err error)
+type DiscoveryWatchExtendFunc func(key string, data []byte, err error)
 
 /*
 发现对象结构定义
@@ -63,13 +64,13 @@ func (d *Discovery) Register(key string, buf []byte, stopCh <-chan struct{}, fn 
 }
 
 /*
-Watch 集群监视功能, 由集群管理节点调用
+WatchNodes 集群监视功能, 由集群管理节点调用
 Watch 为非阻塞方式, 上层业务调用后需考虑阻塞, 避免应用退出.
 stopCh: 退出服务发现
 */
-func (d *Discovery) Watch(stopCh <-chan struct{}, fn DiscoveryWatchFunc) {
+func (d *Discovery) WatchNodes(stopCh <-chan struct{}, fn DiscoveryWatchNodesFunc) {
 
-	discoveryCh, errCh := d.backend.Watch(stopCh)
+	discoveryCh, errCh := d.backend.WatchNodes(stopCh)
 	go func() {
 		cache := backends.Entries{}
 		for {
@@ -86,6 +87,35 @@ func (d *Discovery) Watch(stopCh <-chan struct{}, fn DiscoveryWatchFunc) {
 				{
 					if fn != nil {
 						fn(nil, nil, err)
+					}
+				}
+			}
+		}
+	}()
+}
+
+/*
+WatchExtend 监视一个扩展路径
+Watch 为非阻塞方式, 上层业务调用后需考虑阻塞, 避免应用退出.
+key: 监视路径
+stopCh: 退出服务发现
+*/
+func (d *Discovery) WatchExtend(key string, stopCh <-chan struct{}, fn DiscoveryWatchExtendFunc) {
+
+	dataCh, errCh := d.backend.WatchExtend(key, stopCh)
+	go func() {
+		for {
+			select {
+			case data := <-dataCh:
+				{
+					if fn != nil {
+						fn(key, data, nil)
+					}
+				}
+			case err := <-errCh:
+				{
+					if fn != nil {
+						fn(key, nil, err)
 					}
 				}
 			}
